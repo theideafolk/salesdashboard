@@ -1,11 +1,10 @@
 // SearchFilters.tsx
-// Component for search and filtering controls
+// Component for search and filtering controls for schemes
 
 import React from 'react';
 import { Search, Filter, ChevronDown, X } from 'lucide-react';
 import { FilterOptions, FilterState } from '../types';
 import { cn } from '../../../utils/cn';
-import { useAuth } from '../../../context/AuthContext';
 
 interface SearchFiltersProps {
   searchTerm: string;
@@ -15,7 +14,7 @@ interface SearchFiltersProps {
   selectedFilters: FilterState;
   clearFilters: () => void;
   filterOptions: FilterOptions;
-  onFilterChange: (filterType: 'salesOfficer' | 'areaManager' | 'timeRange', value: string) => void;
+  onFilterChange: (filterType: keyof FilterState, value: any) => void;
 }
 
 const SearchFilters: React.FC<SearchFiltersProps> = ({
@@ -28,8 +27,6 @@ const SearchFilters: React.FC<SearchFiltersProps> = ({
   filterOptions,
   onFilterChange
 }) => {
-  const { isAdmin } = useAuth();
-  
   return (
     <div className="card mb-6">
       <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
@@ -42,7 +39,7 @@ const SearchFilters: React.FC<SearchFiltersProps> = ({
             type="text"
             value={searchTerm}
             onChange={onSearchChange}
-            placeholder="Search orders..."
+            placeholder="Search schemes..."
             className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
         </div>
@@ -60,7 +57,7 @@ const SearchFilters: React.FC<SearchFiltersProps> = ({
           <ChevronDown size={16} className={`ml-2 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
         </button>
         
-        {(selectedFilters.salesOfficer || selectedFilters.areaManager) ? (
+        {(selectedFilters.scope || !selectedFilters.activeOnly) ? (
           <button
             onClick={clearFilters}
             className="text-slate-600 hover:text-slate-800 text-sm flex items-center whitespace-nowrap"
@@ -73,51 +70,34 @@ const SearchFilters: React.FC<SearchFiltersProps> = ({
       
       {/* Filter options */}
       {showFilters && (
-        <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Sales Officer filter */}
+        <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Scope filter */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Sales Officer</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Scope</label>
             <select
-              value={selectedFilters.salesOfficer}
-              onChange={(e) => onFilterChange('salesOfficer', e.target.value)}
+              value={selectedFilters.scope}
+              onChange={(e) => onFilterChange('scope', e.target.value)}
               className="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             >
-              <option value="">All Sales Officers</option>
-              {filterOptions.salesOfficers.map(officer => (
-                <option key={officer.id} value={officer.id}>{officer.name}</option>
+              <option value="">All Scopes</option>
+              {filterOptions.scopes.map(scope => (
+                <option key={scope} value={scope}>{scope.charAt(0).toUpperCase() + scope.slice(1)}</option>
               ))}
             </select>
           </div>
           
-          {/* Area Manager filter - Only show for admin */}
-          {isAdmin && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Area Manager</label>
-              <select
-                value={selectedFilters.areaManager}
-                onChange={(e) => onFilterChange('areaManager', e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              >
-                <option value="">All Area Managers</option>
-                {filterOptions.areaManagers.map(manager => (
-                  <option key={manager.id} value={manager.id}>{manager.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          
-          {/* Time Range filter */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Time Range</label>
-            <select
-              value={selectedFilters.timeRange}
-              onChange={(e) => onFilterChange('timeRange', e.target.value as string)}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            >
-              {filterOptions.timeRanges.map(range => (
-                <option key={range.value} value={range.value}>{range.label}</option>
-              ))}
-            </select>
+          {/* Active Only toggle */}
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="activeOnly"
+              checked={selectedFilters.activeOnly}
+              onChange={(e) => onFilterChange('activeOnly', e.target.checked)}
+              className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+            />
+            <label htmlFor="activeOnly" className="text-sm font-medium text-slate-700">
+              Show active schemes only
+            </label>
           </div>
         </div>
       )}

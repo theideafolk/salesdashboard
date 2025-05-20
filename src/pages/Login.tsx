@@ -86,10 +86,11 @@ const Login: React.FC = () => {
     <div className="min-h-screen bg-slate-50 grid place-items-center px-4 py-12">
       <div className="w-full max-w-md">
         <div className="flex justify-center mb-8">
-          <div className="flex items-center bg-white p-2 rounded-full shadow-card">
-            <LayoutDashboard className="h-8 w-8 text-primary-600" />
-            <span className="ml-2 text-2xl font-bold">DashPWA</span>
-          </div>
+          <img 
+            src="/assets/Benzorgo_revised_logo.png" 
+            alt="Benzorgo Logo" 
+            className="h-32 w-auto"
+          />
         </div>
         
         <div className="bg-white rounded-xl shadow-card overflow-hidden">

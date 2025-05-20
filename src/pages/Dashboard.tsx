@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { BarChart3, TrendingUp, Users, ShoppingCart, AlertCircle } from 'lucide-react';
 import { supabase } from '../utils/supabase';
+import { useCallback } from 'react';
 
 // Define types for our dashboard data
 interface DashboardStats {
@@ -57,61 +58,76 @@ const Dashboard: React.FC = () => {
       setError(null);
       
       try {
-        // Fetch total sales (sum of order amounts)
-        const { data: salesData, error: salesError } = await supabase
-          .from('orders')
-          .select('amount')
+        // For ASM, first get their sales officers
+        let salesOfficerIds: string[] = [];
+        
+        if (!isAdmin && user) {
+          const { data: officers, error: officersError } = await supabase
+            .from('sales_officers')
+            .select('sales_officers_id')
+            .eq('reporting_manager_id', user.id)
+            .eq('is_active', true);
+            
+          if (officersError) throw new Error(`Error fetching sales officers: ${officersError.message}`);
+          salesOfficerIds = officers?.map(o => o.sales_officers_id) || [];
+        }
+        
+        // Build orders query based on role
+        let ordersQuery = supabase
+          .from('orders_view')
+          .select('*')
           .eq('is_deleted', false);
           
-        if (salesError) throw new Error(`Error fetching sales data: ${salesError.message}`);
+        // Filter by sales officers if ASM
+        if (!isAdmin && salesOfficerIds.length > 0) {
+          ordersQuery = ordersQuery.in('sales_officers_id', salesOfficerIds);
+        }
         
-        const totalSales = salesData.reduce((sum, order) => sum + parseFloat(order.amount), 0);
+        const { data: ordersData, error: ordersError } = await ordersQuery;
+          
+        if (ordersError) throw new Error(`Error fetching orders data: ${ordersError.message}`);
+        
+        const totalSales = ordersData?.reduce((sum, order) => sum + parseFloat(order.amount), 0) || 0;
         
         // Fetch active shops count
-        const { count: activeShops, error: shopsError } = await supabase
+        let shopsQuery = supabase
           .from('shops')
-          .select('shop_id', { count: 'exact', head: true })
-          .eq('is_deleted', false);
+          .select('shop_id', { count: 'exact', head: true });
+          
+        // For ASM, only count shops with orders from their team
+        if (!isAdmin && salesOfficerIds.length > 0) {
+          shopsQuery = shopsQuery.in('created_by', salesOfficerIds);
+        }
+        
+        const { count: activeShops, error: shopsError } = await shopsQuery;
           
         if (shopsError) throw new Error(`Error fetching shops data: ${shopsError.message}`);
         
         // Fetch orders count
-        const { count: ordersCount, error: ordersError } = await supabase
-          .from('orders')
-          .select('order_id', { count: 'exact', head: true })
-          .eq('is_deleted', false);
+        const ordersCount = ordersData?.length || 0;
           
-        if (ordersError) throw new Error(`Error fetching orders count: ${ordersError.message}`);
-        
         // Fetch active sales officers count
-        const { count: activeSalesOfficers, error: officersError } = await supabase
+        let officersQuery = supabase
           .from('sales_officers')
           .select('sales_officers_id', { count: 'exact', head: true })
           .eq('is_active', true);
+        
+        // For ASM, only count their team
+        if (!isAdmin && user) {
+          officersQuery = officersQuery.eq('reporting_manager_id', user.id);
+        }
+        
+        const { count: activeSalesOfficers, error: officersError } = await officersQuery;
           
         if (officersError) throw new Error(`Error fetching sales officers data: ${officersError.message}`);
         
-        // Fetch monthly sales data for chart
-        const { data: monthlySales, error: monthlySalesError } = await supabase
-          .from('orders_view')
-          .select('amount, created_at')
-          .eq('is_deleted', false)
-          .order('created_at', { ascending: false });
-          
-        if (monthlySalesError) throw new Error(`Error fetching monthly sales: ${monthlySalesError.message}`);
-        
         // Process monthly sales data
-        const monthlyData = processMonthlyData(monthlySales || []);
+        const monthlyData = processMonthlyData(ordersData || []);
         
         // Fetch recent activity (5 most recent orders)
-        const { data: recentOrders, error: recentOrdersError } = await supabase
-          .from('orders_view')
-          .select('order_id, product_name, created_at, amount, shop_name, sales_officer_name')
-          .eq('is_deleted', false)
-          .order('created_at', { ascending: false })
-          .limit(5);
-          
-        if (recentOrdersError) throw new Error(`Error fetching recent orders: ${recentOrdersError.message}`);
+        const recentOrders = ordersData
+          ?.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .slice(0, 5);
         
         const recentActivity = (recentOrders || []).map(order => ({
           id: order.order_id,
@@ -121,10 +137,10 @@ const Dashboard: React.FC = () => {
         
         // Calculate mock percent changes - in a real app, this would compare with previous periods
         const percentChanges = {
-          sales: 12, // +12% from last month
-          shops: 7,  // +7% from last week
-          orders: 22, // +22% from yesterday
-          officers: 0  // No change
+          sales: calculatePercentChange(ordersData || [], 'amount'),
+          shops: 7, // Placeholder - would calculate from historical data
+          orders: calculatePercentChange(ordersData || [], 'count'),
+          officers: 0 // Placeholder - would calculate from historical data
         };
         
         setStats({
@@ -147,6 +163,28 @@ const Dashboard: React.FC = () => {
     };
     
     fetchDashboardData();
+  }, []);
+  
+  // Helper function to calculate percent change
+  const calculatePercentChange = useCallback((data: any[], type: 'amount' | 'count') => {
+    const now = new Date();
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    
+    const currentData = data.filter(item => new Date(item.created_at) >= lastMonth);
+    const previousData = data.filter(item => {
+      const date = new Date(item.created_at);
+      return date >= new Date(lastMonth.getFullYear(), lastMonth.getMonth() - 1, lastMonth.getDate()) &&
+             date < lastMonth;
+    });
+    
+    if (type === 'amount') {
+      const currentTotal = currentData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+      const previousTotal = previousData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+      return previousTotal === 0 ? 0 : Math.round(((currentTotal - previousTotal) / previousTotal) * 100);
+    } else {
+      return previousData.length === 0 ? 0 : 
+        Math.round(((currentData.length - previousData.length) / previousData.length) * 100);
+    }
   }, []);
   
   // Helper function to process monthly sales data

@@ -1,16 +1,19 @@
-// useShopData.ts
-// Custom hook for managing shop data and operations
+// useSchemeData.ts
+// Custom hook for managing scheme data and operations
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../utils/supabase';
-import { Shop, FilterState } from '../types';
+import { Scheme, FilterState } from '../types';
+import { useAuth } from '../../../context/AuthContext';
 import toast from 'react-hot-toast';
 
-export const useShopData = (initialPage = 1, initialSortColumn = 'created_at', initialSortDirection: 'asc' | 'desc' = 'desc') => {
+export const useSchemeData = (initialPage = 1, initialSortColumn = 'created_at', initialSortDirection: 'asc' | 'desc' = 'desc') => {
+  const { user, isAdmin } = useAuth();
+  
   // Data state
-  const [shops, setShops] = useState<Shop[]>([]);
-  const [filteredShops, setFilteredShops] = useState<Shop[]>([]);
-  const [totalShops, setTotalShops] = useState(0);
+  const [schemes, setSchemes] = useState<Scheme[]>([]);
+  const [filteredSchemes, setFilteredSchemes] = useState<Scheme[]>([]);
+  const [totalSchemes, setTotalSchemes] = useState(0);
   
   // Loading and error states
   const [isLoading, setIsLoading] = useState(true);
@@ -19,64 +22,53 @@ export const useShopData = (initialPage = 1, initialSortColumn = 'created_at', i
   // Search and filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFilters, setSelectedFilters] = useState<FilterState>({
-    territory: '',
-    city: '',
-    state: ''
+    scope: '',
+    activeOnly: true
   });
   
   // Sorting and pagination states
   const [sortColumn, setSortColumn] = useState<string>(initialSortColumn);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(initialSortDirection);
   const [currentPage, setCurrentPage] = useState(initialPage);
-  const shopsPerPage = 10;
+  const schemesPerPage = 10;
 
-  // Fetch shops
-  const fetchShops = useCallback(async () => {
+  // Fetch schemes
+  const fetchSchemes = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
     try {
       // Build query with filters
       let query = supabase
-        .from('shops')
+        .from('schemes')
         .select('*')
-        .eq('is_deleted', false);
+        .eq('is_active', true);
       
-      if (selectedFilters.territory) {
-        query = query.eq('territory', selectedFilters.territory);
+      // Apply filters
+      if (selectedFilters.scope) {
+        query = query.eq('scheme_scope', selectedFilters.scope);
       }
       
-      if (selectedFilters.city) {
-        query = query.eq('city', selectedFilters.city);
-      }
-      
-      if (selectedFilters.state) {
-        query = query.eq('state', selectedFilters.state);
-      }
-
       // Apply search if present
       if (searchTerm.trim()) {
         query = query.or(
-          `name.ilike.%${searchTerm}%,` +
-          `address.ilike.%${searchTerm}%,` +
-          `owner_name.ilike.%${searchTerm}%,` +
-          `phone_number.ilike.%${searchTerm}%,` +
-          `city.ilike.%${searchTerm}%`
+          `scheme_text.ilike.%${searchTerm}%,` +
+          `scheme_scope.ilike.%${searchTerm}%`
         );
       }
       
-      const { data: allShops, error: fetchError } = await query;
+      const { data: allSchemes, error: fetchError } = await query;
       
-      if (fetchError) throw new Error(`Error fetching shops: ${fetchError.message}`);
+      if (fetchError) throw new Error(`Error fetching schemes: ${fetchError.message}`);
       
-      if (!allShops) {
-        setShops([]);
-        setTotalShops(0);
+      if (!allSchemes) {
+        setSchemes([]);
+        setTotalSchemes(0);
         return;
       }
       
-      // Sort the shops
-      const sortedShops = [...allShops].sort((a, b) => {
+      // Sort the schemes
+      const sortedSchemes = [...allSchemes].sort((a, b) => {
         const aValue = a[sortColumn];
         const bValue = b[sortColumn];
         
@@ -86,25 +78,25 @@ export const useShopData = (initialPage = 1, initialSortColumn = 'created_at', i
         return aValue < bValue ? 1 : -1;
       });
       
-      setShops(sortedShops);
-      setTotalShops(sortedShops.length);
+      setSchemes(sortedSchemes);
+      setTotalSchemes(sortedSchemes.length);
     } catch (err) {
-      console.error('Error fetching shops:', err);
+      console.error('Error fetching schemes:', err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
     } finally {
       setIsLoading(false);
     }
   }, [sortColumn, sortDirection, selectedFilters, searchTerm]);
 
-  // Filter and search shops
-  const filterAndSearchShops = useCallback(() => {
+  // Filter and search schemes
+  const filterAndSearchSchemes = useCallback(() => {
     // Apply pagination after filtering
-    const start = (currentPage - 1) * shopsPerPage;
-    const end = start + shopsPerPage;
-    const paginatedShops = shops.slice(start, end);
+    const start = (currentPage - 1) * schemesPerPage;
+    const end = start + schemesPerPage;
+    const paginatedSchemes = schemes.slice(start, end);
     
-    setFilteredShops(paginatedShops);
-  }, [shops, searchTerm, currentPage, shopsPerPage]);
+    setFilteredSchemes(paginatedSchemes);
+  }, [schemes, currentPage, schemesPerPage]);
 
   // Handle search
   const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -113,34 +105,34 @@ export const useShopData = (initialPage = 1, initialSortColumn = 'created_at', i
   }, []);
 
   // Handle filter changes
-  const handleFilterChange = useCallback((filterType: keyof FilterState, value: string) => {
+  const handleFilterChange = useCallback((filterType: keyof FilterState, value: string | boolean) => {
     setSelectedFilters(prev => ({
       ...prev,
       [filterType]: value
     }));
-    setCurrentPage(1); // Reset to first page when changing filters
+    
+    // If changing active filter or scope, refetch data
+    if (filterType === 'activeOnly' || filterType === 'scope') {
+      setCurrentPage(1); // Reset to first page
+    }
   }, []);
 
   // Clear filters
   const clearFilters = useCallback(() => {
     setSelectedFilters({
-      territory: '',
-      city: '',
-      state: ''
+      scope: '',
+      activeOnly: true
     });
     setSearchTerm('');
-    setCurrentPage(1); // Reset to first page when clearing filters
   }, []);
 
   // Handle sorting
   const handleSort = useCallback((column: string) => {
     setSortColumn(prev => {
       if (prev === column) {
-        // Toggle direction if same column
         setSortDirection(prevDirection => prevDirection === 'asc' ? 'desc' : 'asc');
         return column;
       } else {
-        // Set new column and default to ascending
         setSortDirection('asc');
         return column;
       }
@@ -150,52 +142,56 @@ export const useShopData = (initialPage = 1, initialSortColumn = 'created_at', i
   // Handle page change
   const handlePageChange = useCallback((page: number) => {
     if (page < 1) return;
-    const maxPage = Math.ceil(totalShops / shopsPerPage);
+    const maxPage = Math.ceil(totalSchemes / schemesPerPage);
     if (page > maxPage) return;
     
     setCurrentPage(page);
-  }, [totalShops, shopsPerPage]);
+  }, [totalSchemes, schemesPerPage]);
 
-  // Delete a shop (soft delete)
-  const deleteShop = useCallback(async (shopId: string) => {
+  // Delete a scheme (soft delete by setting is_active to false)
+  const deleteScheme = useCallback(async (schemeId: number) => {
     try {
+      if (!isAdmin) {
+        toast.error('Only administrators can deactivate schemes');
+        return;
+      }
+      
       const { error } = await supabase
-        .from('shops')
-        .update({ is_deleted: true })
-        .eq('shop_id', shopId);
+        .from('schemes')
+        .update({ is_active: false })
+        .eq('scheme_id', schemeId);
         
       if (error) throw error;
       
       // Refresh the data
-      await fetchShops();
+      await fetchSchemes();
       
       // Handle if we're on a page that no longer exists after deletion
-      const newMaxPage = Math.ceil((totalShops - 1) / shopsPerPage);
+      const newMaxPage = Math.ceil((totalSchemes - 1) / schemesPerPage);
       if (currentPage > newMaxPage && newMaxPage > 0) {
         setCurrentPage(newMaxPage);
       }
       
-      toast.success('Shop deleted successfully');
+      toast.success('Scheme deactivated successfully');
     } catch (error: any) {
-      console.error('Error deleting shop:', error);
-      toast.error(error.message || 'Failed to delete shop');
+      console.error('Error deactivating scheme:', error);
+      toast.error(error.message || 'Failed to deactivate scheme');
     }
-  }, [fetchShops, totalShops, shopsPerPage, currentPage]);
+  }, [fetchSchemes, totalSchemes, schemesPerPage, currentPage, isAdmin]);
 
-  // Fetch shops when dependencies change
+  // Fetch schemes when dependencies change
   useEffect(() => {
-    fetchShops();
-  }, [fetchShops]);
+    fetchSchemes();
+  }, [fetchSchemes]);
 
   // Apply filters and search when they change
   useEffect(() => {
-    filterAndSearchShops();
-  }, [filterAndSearchShops]);
+    filterAndSearchSchemes();
+  }, [filterAndSearchSchemes]);
 
   return {
-    shops,
-    filteredShops,
-    totalShops,
+    schemes: filteredSchemes,
+    totalSchemes,
     isLoading,
     error,
     searchTerm,
@@ -203,14 +199,15 @@ export const useShopData = (initialPage = 1, initialSortColumn = 'created_at', i
     sortColumn,
     sortDirection,
     currentPage,
-    shopsPerPage,
+    schemesPerPage,
     setSearchTerm,
     handleSearch,
     handleFilterChange,
     clearFilters,
     handleSort,
     handlePageChange,
-    fetchShops,
-    deleteShop
+    fetchSchemes,
+    deleteScheme,
+    isAdmin
   };
 };

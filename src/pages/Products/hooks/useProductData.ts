@@ -35,63 +35,70 @@ export const useProductData = (initialPage = 1, initialSortColumn = 'created_at'
     setError(null);
     
     try {
+      // Build query with filters
       let query = supabase
         .from('products')
-        .select('*', { count: 'exact' });
+        .select('*')
+        .eq('is_active', true);
       
-      // Apply active filter
-      if (selectedFilters.activeOnly) {
-        query = query.eq('is_active', true);
+      // Apply category filter
+      if (selectedFilters.category) {
+        query = query.eq('category', selectedFilters.category);
       }
       
-      // Get total count
-      const { count, error: countError } = await query;
+      // Apply search if present
+      if (searchTerm.trim()) {
+        query = query.or(
+          `name.ilike.%${searchTerm}%,` +
+          `category.ilike.%${searchTerm}%`
+        );
+      }
       
-      if (countError) throw new Error(`Error counting products: ${countError.message}`);
-      
-      setTotalProducts(count || 0);
-      
-      // Fetch paginated data
-      const { data, error: fetchError } = await query
-        .order(sortColumn, { ascending: sortDirection === 'asc' })
-        .range((currentPage - 1) * productsPerPage, currentPage * productsPerPage - 1);
+      const { data: allProducts, error: fetchError } = await query;
       
       if (fetchError) throw new Error(`Error fetching products: ${fetchError.message}`);
       
-      setProducts(data || []);
+      if (!allProducts) {
+        setProducts([]);
+        setTotalProducts(0);
+        return;
+      }
+      
+      // Sort the products
+      const sortedProducts = [...allProducts].sort((a, b) => {
+        const aValue = a[sortColumn];
+        const bValue = b[sortColumn];
+        
+        if (sortDirection === 'asc') {
+          return aValue > bValue ? 1 : -1;
+        }
+        return aValue < bValue ? 1 : -1;
+      });
+      
+      setProducts(sortedProducts);
+      setTotalProducts(sortedProducts.length);
     } catch (err) {
       console.error('Error fetching products:', err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
     } finally {
       setIsLoading(false);
     }
-  }, [currentPage, sortColumn, sortDirection, selectedFilters.activeOnly, productsPerPage]);
+  }, [sortColumn, sortDirection, selectedFilters, searchTerm]);
 
   // Filter and search products
   const filterAndSearchProducts = useCallback(() => {
-    let result = [...products];
+    // Apply pagination after filtering
+    const start = (currentPage - 1) * productsPerPage;
+    const end = start + productsPerPage;
+    const paginatedProducts = products.slice(start, end);
     
-    // Apply search
-    if (searchTerm.trim() !== '') {
-      const lowerSearchTerm = searchTerm.toLowerCase();
-      result = result.filter(product => 
-        product.name.toLowerCase().includes(lowerSearchTerm) ||
-        (product.category && product.category.toLowerCase().includes(lowerSearchTerm)) ||
-        (product.unit_of_measure && product.unit_of_measure.toLowerCase().includes(lowerSearchTerm))
-      );
-    }
-    
-    // Apply category filter
-    if (selectedFilters.category) {
-      result = result.filter(product => product.category === selectedFilters.category);
-    }
-    
-    setFilteredProducts(result);
-  }, [products, searchTerm, selectedFilters]);
+    setFilteredProducts(paginatedProducts);
+  }, [products, currentPage, productsPerPage]);
 
   // Handle search
   const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
+    setCurrentPage(1);
   }, []);
 
   // Handle filter changes
@@ -100,11 +107,7 @@ export const useProductData = (initialPage = 1, initialSortColumn = 'created_at'
       ...prev,
       [filterType]: value
     }));
-    
-    // If changing active filter, refetch data
-    if (filterType === 'activeOnly') {
-      setCurrentPage(1); // Reset to first page
-    }
+    setCurrentPage(1); // Reset to first page when changing filters
   }, []);
 
   // Clear filters

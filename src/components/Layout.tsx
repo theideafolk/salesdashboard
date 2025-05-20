@@ -32,8 +32,11 @@ const Layout: React.FC = () => {
               {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
             </button>
             <Link to="/dashboard" className="flex items-center">
-              <LayoutDashboard className="h-6 w-6 text-primary-600" />
-              <span className="ml-2 text-xl font-semibold">DashPWA</span>
+              <img 
+                src="/assets/Benzorgo_revised_logo.png" 
+                alt="Benzorgo Logo" 
+                className="h-12 w-auto"
+              />
             </Link>
           </div>
           

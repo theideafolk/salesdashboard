@@ -26,9 +26,14 @@ export interface Order {
 export interface FilterOptions {
   salesOfficers: { id: string; name: string }[];
   areaManagers: { id: string; name: string }[];
+  timeRanges: Array<{
+    value: 'today' | 'week' | 'month' | '';
+    label: string;
+  }>;
 }
 
 export interface FilterState {
   salesOfficer: string;
   areaManager: string;
+  timeRange: string;
 }

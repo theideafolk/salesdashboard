@@ -94,31 +94,52 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setIsLoading(true);
     
     try {
-      // In a real app with Supabase, you would implement proper phone auth
-      // For this demo, we'll simulate the authentication with email
-      const authPayload = email 
-        ? { email, password }
-        : { email: `${phone}@example.com`, password }; // Simulating phone auth
-      
-      const { data, error } = await supabase.auth.signInWithPassword(authPayload);
-      
+      // Use phone auth for ASM and email auth for admin
+      const { data, error } = role === 'asm'
+        ? await supabase.auth.signInWithPassword({
+            phone,
+            password
+          })
+        : await supabase.auth.signInWithPassword({
+            email,
+            password
+          });
+        
       if (error) throw error;
       
-      // In a real app, you might query a profiles table to get the role
-      // Here we'll just store it in localStorage for demo purposes
-      localStorage.setItem('userRole', role);
-      
-      if (data.user) {
-        setUser({
-          ...data.user,
-          role,
-          ...(phone ? { phone_number: phone } : {})
-        });
-        toast.success(`Logged in successfully as ${role}`);
+      // Now verify if the user exists in the correct role table
+      const { data: roleData, error: roleError } = await supabase
+        .from(role === 'admin' ? 'application_admins' : 'area_sales_managers')
+        .select('*')
+        .eq(role === 'admin' ? 'admin_user_id' : 'asm_user_id', data.user.id)
+        .eq('is_active', true)
+        .single();
+
+      if (roleError || !roleData) {
+        // If role verification fails, sign out and throw error
+        await supabase.auth.signOut();
+        throw new Error('Invalid credentials or inactive account');
       }
+      
+      // Set user role and additional data
+      const userData = {
+        ...data.user,
+        role,
+        phone_number: roleData.phone_number,
+        name: roleData.name
+      };
+      
+      setUser(userData);
+      localStorage.setItem('userRole', role);
+      localStorage.setItem('userName', roleData.name);
+      
+      toast.success(`Welcome back, ${roleData.name}`);
     } catch (error: any) {
-      console.error('Error signing in:', error.message);
-      toast.error(error.message || 'Failed to sign in');
+      if (error.message === 'Invalid login credentials') {
+        toast.error('Invalid phone number or password');
+      } else {
+        toast.error(error.message || 'Failed to sign in');
+      }
       throw error;
     } finally {
       setIsLoading(false);
@@ -133,6 +154,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(null);
       setSession(null);
       localStorage.removeItem('userRole');
+      localStorage.removeItem('userName');
       toast.success('Logged out successfully');
     } catch (error: any) {
       console.error('Error signing out:', error.message);

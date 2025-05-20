@@ -5,8 +5,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../utils/supabase';
 import { Order, FilterState } from '../types';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../../context/AuthContext';
 
 export const useOrderData = (initialPage = 1, initialSortColumn = 'created_at', initialSortDirection: 'asc' | 'desc' = 'desc') => {
+  const { user, isAdmin } = useAuth();
+  
   // Data state
   const [orders, setOrders] = useState<Order[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
@@ -20,7 +23,8 @@ export const useOrderData = (initialPage = 1, initialSortColumn = 'created_at', 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFilters, setSelectedFilters] = useState<FilterState>({
     salesOfficer: '',
-    areaManager: ''
+    areaManager: '',
+    timeRange: ''
   });
   
   // Sorting and pagination states
@@ -35,72 +39,99 @@ export const useOrderData = (initialPage = 1, initialSortColumn = 'created_at', 
     setError(null);
     
     try {
-      // First, get a distinct count of unique order IDs
-      const { data: uniqueOrderIdQuery, error: distinctError } = await supabase
+      // Fetch all orders for the current filters
+      let query = supabase
         .from('orders_view')
-        .select('order_id')
+        .select('*')
         .eq('is_deleted', false);
-        
-      if (distinctError) throw new Error(`Error counting orders: ${distinctError.message}`);
       
-      // Extract unique order IDs using a Set
-      const uniqueOrderIdSet = new Set(uniqueOrderIdQuery?.map(item => item.order_id) || []);
-      const uniqueOrderIds = Array.from(uniqueOrderIdSet);
-      
-      // Update total orders count
-      setTotalOrders(uniqueOrderIds.length);
-      
-      // Sort the unique order IDs based on the selected sort column
-      const { data: sortedOrders, error: sortError } = await supabase
-        .from('orders_view')
-        .select('order_id, created_at, sales_officer_name, shop_name')
-        .in('order_id', uniqueOrderIds)
-        .eq('is_deleted', false)
-        .order(sortColumn, { ascending: sortDirection === 'asc' });
-        
-      if (sortError) throw new Error(`Error sorting orders: ${sortError.message}`);
-      
-      // Get unique sorted order IDs (removing duplicates)
-      const uniqueSortedIds = [];
-      const seenIds = new Set();
-      
-      for (const order of sortedOrders || []) {
-        if (!seenIds.has(order.order_id)) {
-          uniqueSortedIds.push(order.order_id);
-          seenIds.add(order.order_id);
-        }
+      // If user is ASM, only show orders from their team
+      if (!isAdmin && user?.id) {
+        query = query.eq('area_sales_manager_id', user.id);
       }
       
-      // Apply pagination to the unique sorted order IDs
-      const paginatedOrderIds = uniqueSortedIds.slice(
-        (currentPage - 1) * ordersPerPage, 
-        currentPage * ordersPerPage
-      );
+      // Apply filters
+      if (selectedFilters.salesOfficer) {
+        query = query.eq('sales_officers_id', selectedFilters.salesOfficer);
+      }
       
-      if (paginatedOrderIds.length === 0) {
+      // Only apply area manager filter if user is admin
+      if (isAdmin && selectedFilters.areaManager) {
+        query = query.eq('area_sales_manager_id', selectedFilters.areaManager);
+      }
+      
+      // Apply time range filter
+      if (selectedFilters.timeRange) {
+        const now = new Date();
+        let startDate: Date;
+        let endDate: Date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        
+        switch (selectedFilters.timeRange) {
+          case 'today':
+            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+            break;
+            
+          case 'week':
+            // Get current week's Monday and Sunday
+            const currentDay = now.getDay();
+            const diff = currentDay === 0 ? 6 : currentDay - 1; // Adjust when Sunday
+            startDate = new Date(now);
+            startDate.setDate(now.getDate() - diff);
+            startDate.setHours(0, 0, 0, 0);
+            
+            endDate = new Date(startDate);
+            endDate.setDate(startDate.getDate() + 6);
+            endDate.setHours(23, 59, 59, 999);
+            break;
+            
+          case 'month':
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+            break;
+            
+          default:
+            return;
+        }
+        
+        query = query
+          .gte('created_at', startDate.toISOString())
+          .lte('created_at', endDate.toISOString());
+      }
+      
+      const { data: allOrders, error: fetchError } = await query;
+      
+      if (fetchError) throw new Error(`Error fetching orders: ${fetchError.message}`);
+      
+      if (!allOrders) {
         setOrders([]);
-        setIsLoading(false);
+        setTotalOrders(0);
         return;
       }
       
-      // Fetch complete order details for the paginated IDs
-      const { data: orderDetails, error: orderDetailsError } = await supabase
-        .from('orders_view')
-        .select('*')
-        .in('order_id', paginatedOrderIds)
-        .eq('is_deleted', false);
-        
-      if (orderDetailsError) throw new Error(`Error fetching order details: ${orderDetailsError.message}`);
+      // Process the orders data to combine items for the same order
+      const processedOrders = processOrdersData(allOrders);
       
-      const processedOrders = processOrdersData(orderDetails || []);
-      setOrders(processedOrders);
+      // Sort the processed orders
+      const sortedOrders = [...processedOrders].sort((a, b) => {
+        const aValue = a[sortColumn];
+        const bValue = b[sortColumn];
+        
+        if (sortDirection === 'asc') {
+          return aValue > bValue ? 1 : -1;
+        }
+        return aValue < bValue ? 1 : -1;
+      });
+      
+      setOrders(sortedOrders);
+      setTotalOrders(sortedOrders.length);
+      
     } catch (err) {
       console.error('Error fetching orders:', err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
     } finally {
       setIsLoading(false);
     }
-  }, [currentPage, sortColumn, sortDirection]);
+  }, [currentPage, sortColumn, sortDirection, selectedFilters]);
 
   // Process orders data
   const processOrdersData = (orderDetails: any[]): Order[] => {
@@ -187,17 +218,13 @@ export const useOrderData = (initialPage = 1, initialSortColumn = 'created_at', 
       );
     }
     
-    // Apply filters
-    if (selectedFilters.salesOfficer) {
-      result = result.filter(order => order.sales_officers_id === selectedFilters.salesOfficer);
-    }
-    
-    if (selectedFilters.areaManager) {
-      result = result.filter(order => order.area_sales_manager_id === selectedFilters.areaManager);
-    }
+    // Apply pagination after filtering
+    const start = (currentPage - 1) * ordersPerPage;
+    const end = start + ordersPerPage;
+    result = result.slice(start, end);
     
     setFilteredOrders(result);
-  }, [orders, searchTerm, selectedFilters]);
+  }, [orders, searchTerm, currentPage, ordersPerPage]);
 
   // Handle search
   const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -216,7 +243,8 @@ export const useOrderData = (initialPage = 1, initialSortColumn = 'created_at', 
   const clearFilters = useCallback(() => {
     setSelectedFilters({
       salesOfficer: '',
-      areaManager: ''
+      areaManager: '',
+      timeRange: ''
     });
     setSearchTerm('');
   }, []);
